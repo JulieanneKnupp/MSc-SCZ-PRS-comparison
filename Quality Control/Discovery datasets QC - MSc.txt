@@ -1,0 +1,69 @@
+#QC on discovery datasets for PRS
+#code from: https://choishingwan.github.io/PRS-Tutorial/base/
+#navigate to working directory in Linux
+cd /mnt/c/Users/20742959/Desktop/MultiPRS
+
+#PGC3 SCZ wave3 African American
+#view discovery dataset
+gunzip -c PGC3_SCZ_wave3.afram.autosome.public.v3.vcf.tsv.gz | head
+
+gunzip -c PGC3_SCZ_wave3.afram.autosome.public.v3.vcf.tsv.gz |\
+sed '/^#/ d' > PGC3_SCZ_wave3.afram.vcf.tsv.gz
+
+#1. QWAS QC
+#filter INFO score > 0.8
+gunzip -c PGC3_SCZ_wave3.afram.vcf.tsv.gz |\
+awk 'NR==1 || ($8 > 0.8) {print}' < PGC3_SCZ_wave3.afram.vcf.tsv.gz |\
+gzip  > SCZ3.gz
+
+gunzip -c SCZ3.gz | head
+
+#2. remove duplicate snps
+gunzip -c SCZ3.gz |\
+awk '{seen[$2]++; if(seen[$2]==1){ print}}' |\
+gzip - > SCZ3.AA.nodup.gz
+
+#check duplicated.snp for snps
+awk '{print$1} |\sort || uniq -d > duplicated.snp
+
+#results:
+#Duplicated.snp empty therefore no duplicated snps present
+
+#3. remove ambigous snps
+gunzip -c SCZ3.AA.nodup.gz |\
+awk '!( ($4=="A" && $5=="T") || \
+        ($4=="T" && $5=="A") || \
+        ($4=="G" && $5=="C") || \
+        ($4=="C" && $5=="G")) {print}' |\
+    gzip > SCZ3.AA.QC.gz
+
+# PGC3 SCZ wave3 CORE (European)
+gunzip -c PGC3_SCZ_wave3.core.autosome.public.v3.vcf.tsv.gz | head -n80
+gunzip -c PGC3_SCZ_wave3.core.autosome.public.v3.vcf.tsv.gz |\
+sed '/^#/ d' > PGC3_SCZ_wave3.core.vcf.tsv.gz
+
+#1. QWAS QC
+#filter INFO score > 0.8
+gunzip -c PGC3_SCZ_wave3.core.vcf.tsv.gz |\
+awk 'NR==1 || ($8 > 0.8) {print}' < PGC3_SCZ_wave3.core.vcf.tsv.gz |\
+gzip  > SCZ3.core.gz
+
+gunzip -c SCZ3.core.gz | head
+
+#2. remove duplicate snps
+gunzip -c SCZ3.core.gz |\
+awk '{seen[$2]++; if(seen[$2]==1){ print}}' |\
+gzip - > SCZ3.core.nodup.gz
+#check duplicated.snp for snps
+awk '{print$1} |\sort || uniq -d > duplicated.snp
+
+#results
+#Duplicated.snp empty therefore no duplicated snps present
+
+#3. remove ambigous snps
+gunzip -c SCZ3.core.nodup.gz |\
+awk '!( ($4=="A" && $5=="T") || \
+        ($4=="T" && $5=="A") || \
+        ($4=="G" && $5=="C") || \
+        ($4=="C" && $5=="G")) {print}' |\
+    gzip > SCZ3.core.QC.gz

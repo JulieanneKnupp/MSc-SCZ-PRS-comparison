@@ -1,0 +1,327 @@
+#lassosum for calculation of PRS for ATR outcomes
+install.packages(c("devtools","RcppArmadillo", "data.table", "Matrix"), dependencies=TRUE)
+library(devtools)
+install_github("tshmak/lassosum")
+library(lassosum)
+# Prefer to work with data.table as it speeds up file reading
+library(data.table)
+library(methods)
+library(magrittr)
+# For multi-threading, you can use the parallel package and 
+# invoke cl which is then passed to lassosum.pipeline
+library(parallel)
+# This will invoke 2 threads. 
+cl <- makeCluster(2)
+
+#load in discovery summary stats and target dataset
+sum.stat <- "SCZ3.QC.gz"
+bfile <- "SAfrica.QC"
+
+# We will need the EUR.hg19 file provided by lassosum 
+# which are LD regions defined in Berisa and Pickrell (2015) for the European population and the hg19 genome.
+ld.file <- "EUR.hg19"
+# output prefix
+prefix <- "EUR"
+# Read in the summary statistics
+ss <- fread(sum.stat)
+# Remove P-value = 0, which causes problem in the transformation
+ss <- ss[!P == 0]
+# Transform the P-values into correlation
+cor <- p2cor(p = ss$P,
+        n = ss$Neff,
+        sign = log(ss$OR)
+        )
+fam <- fread(paste0(bfile, ".fam"))
+fam[,ID:=do.call(paste, c(.SD, sep=":")),.SDcols=c(1:2)]
+names(fam) <- c("FID","IID","PaternalID", "MaternalID", "Sex", "Phenotype", "ID")
+fam["Phenotype"] <- NA
+
+names(covariate)[names(covariate) == 'SampleID'] <- 'IID'
+# Run the lassosum pipeline
+# The cluster parameter is used for multi-threading
+# You can ignore that if you do not wish to perform multi-threaded processing
+out <- lassosum.pipeline(
+    cor = cor,
+    chr = ss$CHR,
+    pos = ss$BP,
+    A1 = ss$A1,
+    A2 = ss$A2,
+    ref.bfile = bfile,
+    test.bfile = bfile,
+    LDblocks = ld.file, 
+    cluster=cl
+)
+
+#validate against PANSS_T
+# Read in and process the covariates
+covariate.t <- fread("pansst.cov.txt")
+# Read in the target phenotype file
+target.pansst <- fread("PANSS_T.txt")
+#Make sure first two columns of target.pansst are "FID" & "IID"
+names(target.pansst) <- c("FID","IID","PANSS_T")
+#Make sure pheno & covariate files have equal lines (n=76)
+target.pansst <- target.pansst[c(-14,-28),]
+covariate.t <- covariate.t[c(-3,-10, -12, -17, -26, -32, -33, -35, -42, -43, -44, -45, -46, -47, -62, -63, -64, -73, -74, -78, -81, -86, -87, -88, -94, -95, -96)]
+# Store the R2 results
+target.res.T <- validate(out, pheno = as.data.frame(target.pansst), covar=as.data.frame(covariate.t))
+# Get the maximum R2
+r2 <- max(target.res.T$validation.table$value)^2
+#extract best PRS for PANSS_T
+lassosum_prs_T <- target.res.T[["results.table"]][["best.pgs"]]
+write(lassosum_prs_T, file = "lassosum_prs_T.txt", ncolumns = 1, sep = " ")
+
+#validate against PANSS_P
+target.panssp <- fread("PANSS_P.txt")
+covariate.p <- fread("panssp.cov.txt")
+#Make sure first two columns of target.pheno are "FID" & "IID"
+names(target.panssp) <- c("FID","IID","PANSS_P")
+names(covariate.p)[names(covariate.p) == 'SampleID'] <- 'IID'
+#Make sure pheno & covariate files have equal lines (n=76)
+covariate.p <- covariate.p[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94)]
+# Store the R2 results
+target.res.P <- validate(out, pheno = as.data.frame(target.panssp), covar=as.data.frame(covariate.p))
+# Get the maximum R2
+r2.P <- max(target.res.P$validation.table$value)^2
+#extract best PRS for PANSS_P
+lassosum_prs_P <- target.res.P[["results.table"]][["best.pgs"]]
+write(lassosum_prs_P, file = "lassosum_prs_P.txt", ncolumns = 1, sep = " ")
+
+#validate against PANSS_N
+target.panssn <- fread("PANSS_N.txt")
+covariate.n <- fread("panssn.cov.txt")
+#Make sure first two columns of target.pheno are "FID" & "IID"
+names(target.panssn) <- c("FID","IID","PANSS_N")
+names(covariate.n)[names(covariate.n) == 'SampleID'] <- 'IID'
+#Make sure pheno & covariate files have equal lines (n=76)
+covariate.n <- covariate.n[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94)]
+# Store the R2 results
+target.res.N <- validate(out, pheno = as.data.frame(target.panssn), covar=as.data.frame(covariate.n))
+# Get the maximum R2
+r2.N <- max(target.res.N$validation.table$value)^2
+#extract best PRS for PANSS_N
+lassosum_prs_N <- target.res.N[["results.table"]][["best.pgs"]]
+write(lassosum_prs_N, file = "lassosum_prs_N.txt", ncolumns = 1, sep = " ")
+
+#validate against PANSS_G
+target.panssg <- fread("PANSS_G.txt")
+covariate.g <- fread("panssg.cov.txt")
+#Make sure first two columns of target.pheno are "FID" & "IID"
+names(target.panssg) <- c("FID","IID","PANSS_G")
+names(covariate.g)[names(covariate.g) == 'SampleID'] <- 'IID'
+#Make sure pheno & covariate files have equal lines (n=76)
+covariate.g <- covariate.g[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94)]
+# Store the R2 results
+target.res.G <- validate(out, pheno = as.data.frame(target.panssg), covar=as.data.frame(covariate.g))
+# Get the maximum R2
+r2.G <- max(target.res.G$validation.table$value)^2
+#extract best PRS for PANSS_G
+lassosum_prs_G <- target.res.G[["results.table"]][["best.pgs"]]
+write(lassosum_prs_G, file = "lassosum_prs_G.txt", ncolumns = 1, sep = " ")
+
+#validate against EPSAE
+target.epsae <- fread("EPSAE.txt")
+covariate.e <- fread("SAfrica.cov.txt")
+#Make sure first two columns of target.pheno are "FID" & "IID"
+names(target.epsae) <- c("FID","IID","EPSAE")
+names(covariate.e)[names(covariate.e) == 'SampleID'] <- 'IID'
+#Make sure pheno & covariate files have equal lines (n=76)
+target.epsae <- target.epsae[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94)]
+covariate.e <- covariate.e[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94)]
+# Store the R2 results
+target.res.E <- validate(out, pheno = as.data.frame(target.epsae), covar=as.data.frame(covariate.e))
+# Get the maximum R2
+r2.E <- max(target.res.E$validation.table$value)^2
+#extract best PRS for EPSAE
+lassosum_prs_E <- target.res.E[["results.table"]][["best.pgs"]]
+write(lassosum_prs_E, file = "lassosum_prs_E.txt", ncolumns = 1, sep = " ")
+
+
+## Performed REGRESSION manually as 'validate' r2 not defined
+#and to extract model performance criteria
+library(readxl)
+#evaluating PRS against relative change in PANSS_T
+# Read in the phenotype file 
+T_phenotype <- read.table("PANSS_T.txt", header=T)
+# Read in the covariates
+T_covariate <- read.table("pansst.cov.txt", header=T)
+#ensure equal number of lines
+T_phenotype <- T_phenotype[c(-14,-28),]
+T_covariate <- T_covariate[c(-3,-10, -12, -17, -26, -32, -33, -35, -42, -43, -44, -45, -46, -47, -62, -63, -64, -73, -74, -78, -81, -86, -87, -88, -94, -95, -96),]
+# Now merge the files
+T_pheno <- merge(T_phenotype, T_covariate, by = c("FID", "SampleID"))
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_T is quantitative)
+T_null.model <- lm(PANSS_T~., data=T_pheno[,!colnames(T_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+T_null.r2 <- summary(T_null.model)$r.squared
+T_prs.result <- NULL
+
+#read in lassosum calculated PRS for PANSS T
+T_prs <- read_excel("lasso_T.xlsx")
+T_prs$Lasso_T <- as.numeric(T_prs$Lasso_T)
+#merge phenotype and prs files    
+T_pheno.prs <- merge(T_pheno, T_prs[,c("FID","SampleID", "Lasso_T")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_T with PRS and the covariates
+T_model <- lm(PANSS_T~., data=T_pheno.prs[,!colnames(T_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+T_model.r2 <- summary(T_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+T_prs.r2 <- T_model.r2-T_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+T_prs.coef <- summary(T_model)$coeff["Lasso_T",]
+T_prs.beta <- as.numeric(T_prs.coef[1])
+T_prs.se <- as.numeric(T_prs.coef[2])
+T_prs.p <- as.numeric(T_prs.coef[4])
+# We can then store the results
+T_prs.result <- rbind(T_prs.result, data.frame(Null_R2=T_null.r2, Model_R2=T_model.r2, R2=T_prs.r2, P=T_prs.p, BETA=T_prs.beta,SE=T_prs.se))
+
+
+#evaluating PRS against relative change in PANSS_P
+# Read in the phenotype file 
+P_phenotype <- read.table("PANSS_P.txt", header=T)
+# Read in the covariates
+P_covariate <- read.table("panssp.cov.txt", header=T)
+P_covariate <- P_covariate[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94),]
+# Now merge the files
+P_pheno <- merge(P_phenotype, P_covariate, by = c("FID", "SampleID"))
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_P is quantitative)
+P_null.model <- lm(PANSS_P~., data=P_pheno[,!colnames(P_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+P_null.r2 <- summary(P_null.model)$r.squared
+P_prs.result <- NULL
+
+#read in lassosum calculated PRS for PANSS P
+P_prs <- read_excel("lasso_P.xlsx")
+P_prs$Lasso_P <- as.numeric(P_prs$Lasso_P)
+#merge pheno and PRS files
+P_pheno.prs <- merge(P_pheno, P_prs[,c("FID","SampleID", "Lasso_P")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_P with PRS and the covariates
+P_model <- lm(PANSS_P~., data=P_pheno.prs[,!colnames(P_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+P_model.r2 <- summary(P_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+P_prs.r2 <- P_model.r2-P_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+P_prs.coef <- summary(P_model)$coeff["Lasso_P",]
+P_prs.beta <- as.numeric(P_prs.coef[1])
+P_prs.se <- as.numeric(P_prs.coef[2])
+P_prs.p <- as.numeric(P_prs.coef[4])
+# We can then store the results
+P_prs.result <- rbind(P_prs.result, data.frame(Null_R2=P_null.r2, Model_R2=P_model.r2, R2=P_prs.r2, P=P_prs.p, BETA=P_prs.beta,SE=P_prs.se))
+
+#evaluating PRS against relative change in PANSS_N
+# Read in the phenotype file 
+N_phenotype <- read.table("PANSS_N.txt", header=T)
+# Read in the covariates
+N_covariate <- read.table("panssn.cov.txt", header=T)
+N_covariate <- N_covariate[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94),]
+# Now merge the files
+N_pheno <- merge(N_phenotype, N_covariate, by = c("FID", "SampleID"))
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_N is quantitative)
+N_null.model <- lm(PANSS_N~., data=N_pheno[,!colnames(N_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+N_null.r2 <- summary(N_null.model)$r.squared
+N_prs.result <- NULL
+
+#read in lassosum calculated PRS for PANSS N
+N_prs <- read_excel("lasso_N.xlsx")
+N_prs$Lasso_N <- as.numeric(N_prs$Lasso_N)
+#merge PRS and phenotype files
+N_pheno.prs <- merge(N_pheno, N_prs[,c("FID","SampleID", "Lasso_N")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_N with PRS and the covariates
+N_model <- lm(PANSS_N~., data=N_pheno.prs[,!colnames(N_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+N_model.r2 <- summary(N_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+N_prs.r2 <- N_model.r2-N_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+N_prs.coef <- summary(N_model)$coeff["Lasso_N",]
+N_prs.beta <- as.numeric(N_prs.coef[1])
+N_prs.se <- as.numeric(N_prs.coef[2])
+N_prs.p <- as.numeric(N_prs.coef[4])
+# We can then store the results
+N_prs.result <- rbind(N_prs.result, data.frame(Null_R2=N_null.r2, Model_R2=N_model.r2, R2=N_prs.r2, P=N_prs.p, BETA=N_prs.beta,SE=N_prs.se))
+
+#evaluating PRS against change in PANSS_G
+# Read in the phenotype file 
+G_phenotype <- read.table("PANSS_G.txt", header=T)
+# Read in the covariates 
+G_covariate <- read.table("panssg.cov.txt", header=T)
+#ensure pheno and covariate files have same number of lines
+G_covariate <- G_covariate[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94),]
+# Now merge the files
+G_pheno <- merge(G_phenotype, G_covariate, by = c("FID", "SampleID"))
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_G is quantitative)
+G_null.model <- lm(PANSS_G~., data=G_pheno[,!colnames(G_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+G_null.r2 <- summary(G_null.model)$r.squared
+G_prs.result <- NULL
+
+#read in lassosum calculated PRS for PANSS G
+G_prs <- read_excel("lasso_G.xlsx")
+G_prs$Lasso_G <- as.numeric(G_prs$Lasso_G)
+#merge PRS and pheno files
+G_pheno.prs <- merge(G_pheno, G_prs[,c("FID","SampleID", "Lasso_G")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_P with PRS and the covariates
+G_model <- lm(PANSS_G~., data=G_pheno.prs[,!colnames(G_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+G_model.r2 <- summary(G_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+G_prs.r2 <- G_model.r2-G_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+G_prs.coef <- summary(G_model)$coeff["Lasso_G",]
+G_prs.beta <- as.numeric(G_prs.coef[1])
+G_prs.se <- as.numeric(G_prs.coef[2])
+G_prs.p <- as.numeric(G_prs.coef[4])
+# We can then store the results
+G_prs.result <- rbind(G_prs.result, data.frame(Null_R2=G_null.r2, Model_R2=G_model.r2, R2=G_prs.r2, P=G_prs.p, BETA=G_prs.beta,SE=G_prs.se))
+
+
+#evaluating PRS against dichotomous outcome EPSAE
+library(fmsb)
+# Read in the phenotype file 
+E_phenotype <- read.table("EPSAE.txt", header=T)
+# Read in the covariates
+E_covariate <- read.table("SAfrica.cov.txt", header=T)
+#ensure pheno and covar files have same lines
+E_phenotype <- E_phenotype[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94),]
+# Now merge the files
+E_pheno <- merge(E_phenotype, E_covariate, by = c("FID", "SampleID"))
+
+# We can then calculate the null model (model without PRS) using logistic regression 
+# (as EPSAE is dichotomous)
+E_null.model <- glm(EPSAE~., data=E_pheno[,!colnames(E_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+E_null.r2 <- NagelkerkeR2(E_null.model)$R2
+E_prs.result <- NULL
+
+#read in lassosum calculated PRS for EPSAE
+E_prs <- read_excel("lasso_E.xlsx")
+E_prs$Lasso_E <- as.numeric(E_prs$Lasso_E)
+#merge pheno and PRS files
+E_pheno.prs <- merge(E_pheno, E_prs[,c("FID","SampleID", "Lasso_E")], by=c("FID", "SampleID"))
+# Now perform a logistic regression on EPSAE with PRS and the covariates
+E_model <- glm(EPSAE~., data=E_pheno.prs[,!colnames(E_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+E_model.r2 <- NagelkerkeR2(E_model)$R2
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+E_prs.r2 <- E_model.r2-E_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+E_prs.coef <- summary(E_model)$coeff["Lasso_E",]
+E_prs.beta <- as.numeric(E_prs.coef[1])
+E_prs.se <- as.numeric(E_prs.coef[2])
+E_prs.p <- as.numeric(E_prs.coef[4])
+# We can then store the results
+E_prs.result <- rbind(E_prs.result, data.frame(Null_R2=E_null.r2, Model_R2=E_model.r2, R2=E_prs.r2, P=E_prs.p, BETA=E_prs.beta,SE=E_prs.se))
+
+#write results of each regression into text files
+write.table(E_prs.result, file = "EPSAE_lassosum.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(P_prs.result, file = "PANSSP_lassosum.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(N_prs.result, file = "PANSSN_lassosum.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(G_prs.result, file = "PANSSG_lassosum.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(T_prs.result, file = "PANSST_lassosum.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+
+

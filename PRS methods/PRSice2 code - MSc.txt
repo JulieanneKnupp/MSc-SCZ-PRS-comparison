@@ -1,0 +1,95 @@
+#PRSice-2
+#Use PRSice-2 to get PRS for relative change in PANSS Total
+Rscript PRSice.R \
+    --prsice PRSice_linux \
+    --base SCZ3.QC \
+    --target SAfrica.QC1 \
+    --binary-target F \
+    --pheno PANSS_T.txt \
+    --cov pansst.cov.txt \
+--pheno-col PANSS_T \
+    --base-info info:0.8 \
+--pvalue p \
+--snp snpid \
+--a1 a1 \
+    --stat or \
+--or \
+--perm 10000 \
+--quantile 10 \
+--out T1
+
+#relative change in PANSS_P
+Rscript PRSice.R \
+    --prsice PRSice_linux \
+    --base SCZ3.QC \
+    --target SAfrica.QC1 \
+    --binary-target F \
+    --pheno PANSS_P.txt \
+    --cov panssp.cov.txt \
+--pheno-col PANSS_P \
+    --base-info INFO:0.8 \
+--pvalue P \
+--snp SNP \
+--a1 A1 \
+    --stat OR \
+--or \
+--perm 10000 \
+--quantile 10 \
+--out P1
+
+#relative change in PANSS_N
+Rscript PRSice.R \
+    --prsice PRSice_linux \
+    --base SCZ3.QC \
+    --target SAfrica.QC1 \
+    --binary-target F \
+    --pheno PANSS_N.txt \
+    --cov panssn.cov.txt \
+--pheno-col PANSS_N \
+    --base-info INFO:0.8 \
+--pvalue P \
+--snp SNP \
+--a1 A1 \
+    --stat OR \
+--or \
+--perm 10000 \
+--quantile 10 \
+--out N1
+
+#relative change in PANSS_G
+Rscript PRSice.R \
+    --prsice PRSice_linux \
+    --base SCZ3.QC \
+    --target SAfrica.QC1 \
+    --binary-target F \
+    --pheno PANSS_G.txt \
+    --cov panssg.cov.txt \
+--pheno-col PANSS_G \
+    --base-info INFO:0.8 \
+--pvalue P \
+--snp SNP \
+--a1 A1 \
+    --stat OR \
+--or \
+--perm 10000 \
+--quantile 10 \
+--out G1
+
+#for dichotomous outcome EPSAE
+Rscript PRSice.R \
+    --prsice PRSice_linux \
+    --base SCZ3.QC \
+    --target SAfrica.QC1 \
+    --binary-target T \
+    --pheno EPSAE.txt \
+    --cov SAfrica.cov.txt \
+--pheno-col EPSAE \
+    --base-info INFO:0.8 \
+--pvalue P \
+--snp SNP \
+--a1 A1 \
+    --stat OR \
+--or \
+--perm 10000 \
+--quantile 10 \
+--out EPSAE1

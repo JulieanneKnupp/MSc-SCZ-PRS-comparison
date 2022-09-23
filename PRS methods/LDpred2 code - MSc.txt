@@ -1,0 +1,322 @@
+#LDpred2 method for ATR outcomes using AUTO model
+#code from: https://choishingwan.github.io/PRS-Tutorial/ldpred/
+#and from: https://privefl.github.io/bigsnpr/articles/LDpred2.html
+#install required packages
+install.packages("remotes")
+library(remotes)
+remotes::install_github("https://github.com/privefl/bigsnpr.git")
+#PREP WORKSPACE
+library(bigsnpr)
+options(bigstatsr.check.parallel.blas = FALSE)
+options(default.nproc.blas = NULL)
+library(data.table)
+library(magrittr)
+
+#obtain HAPMAP3 SNPS
+library(runonce)
+info <- readRDS(runonce::download_file("https://indownloader.figshare.com/files/25503788",fname = "map_hm3_ldpred2.rds"))
+
+#LOAD & TRANSFORM SUMMARY STATS FILE
+#read in summary stats file
+sumstats <- bigreadr::fread2("scz3.QC.gz")
+#HAVE A LOOK AT THE FILE - specifically column ordering!!
+
+#rename sumstats columns
+sumstats[[c("FRQ_A_67390", "FRQ_U_94015", "Direction", "HetISqt", "HetDf", "HetPVa")]] <- NULL
+names(sumstats) <- c("chr","rsid", "pos", "a1", "a0", "INFO", "OR", "beta_se", "p", "ngt", "Nca", "Nco", "n_eff")
+
+#transform the OR into log(OR)
+sumstats$beta <- log(sumstats$OR)
+#filter out the hapmap SNPs - matching the rsid in sumstats to that of info (hapmap)
+library(R.utils)
+sumstats <- sumstats[sumstats$rsid%in% info$rsid,]
+
+#CALCULATE THE LD MATRIX
+# Get maximum amount of cores
+NCORES <- nb_cores()
+# Open a temporary file
+tmp <- tempfile(tmpdir = "tmp-data")
+on.exit(file.remove(paste0(tmp, ".sbk")), add = TRUE)
+# Initialize variables for storing the LD score and LD matrix
+corr <- NULL
+ld <- NULL
+# We want to know the ordering of samples in the bed file 
+fam.order <- NULL
+# preprocess the bed file (only need to do once for each data set)
+snp_readBed("SAfrica.QC.bed")
+# now attach the genotype object
+obj.bigSNP <- snp_attach("SAfrica.QC.rds")
+# extract the SNP information from the genotype
+map <- obj.bigSNP$map[-3]
+names(map) <- c("chr", "rsid", "pos", "a0", "a1")
+
+
+# perform SNP matching
+info_snp <- snp_match(sumstats, map, join_by_pos = FALSE)
+
+#remove chr snps labelled on chrs 23, 25 & 26
+map <- subset(map, chr < 23)
+
+# Assign the genotype to a variable for easier downstream analysis
+genotype <- obj.bigSNP$genotypes
+# Rename the data structures
+CHR <- map$chr
+POS <- map$pos
+# get the CM information from 1000 Genome
+# will download the 1000G file to the current directory (".")
+POS2 <- snp_asGeneticPos(CHR, POS, dir = ".")
+
+# calculate LD
+for (chr in 1:22) {
+    # Extract SNPs that are included in the chromosome
+    ind.chr <- which(info_snp$chr == chr)
+    ind.chr2 <- info_snp$`_NUM_ID_`[ind.chr]
+    # Calculate the LD
+    corr0 <- snp_cor(
+            genotype,
+            ind.col = ind.chr2,
+            ncores = NCORES,
+            infos.pos = POS2[ind.chr2],
+            size = 3 / 1000
+        )
+    if (chr == 1) {
+        ld <- Matrix::colSums(corr0^2)
+        corr <- as_SFBM(corr0, tmp)
+    } else {
+        ld <- c(ld, Matrix::colSums(corr0^2))
+        corr$add_columns(corr0, nrow(corr))
+    }
+}
+# We assume the fam order is the same across different chromosomes
+fam.order <- as.data.table(obj.bigSNP$fam)
+# Rename fam order
+setnames(fam.order,
+        c("family.ID", "sample.ID"),
+        c("FID", "IID"))
+
+#PERFORM LD SCORE REGRESSION
+df_beta <- info_snp[,c("beta", "beta_se", "n_eff", "_NUM_ID_")]
+ldsc <- snp_ldsc(   ld, 
+                    length(ld), 
+                    chi2 = (df_beta$beta / df_beta$beta_se)^2,
+                    sample_size = df_beta$n_eff, 
+                    blocks = NULL)
+h2_est <- ldsc[["h2"]]
+
+#CALCULATE THE NULL R2 for all ATR outcomes
+# Reformat the phenotype file such that y is of the same order as the 
+# sample ordering in the genotype file
+#PANSS_T
+phenotype <- fread("PANSS_T.txt")
+covariate <- fread("pansst.cov.txt")
+#merge phenotype and covariate files
+pheno <- merge(phenotype, covariate)
+pheno <- pheno[c(-14,-28),]
+setnames(pheno,
+        c("FID", "SampleID"),
+        c("FID", "IID"))
+y <- pheno[fam.order, on = c("FID", "IID")]
+null.model <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSST_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_T~Age+", .) %>%
+    as.formula %>%
+    lm(., data = y) %>%
+    summary
+null.r2 <- null.model$r.squared
+
+#PANSS_P
+P_phenotype <- fread("PANSS_P.txt")
+P_covariate <- fread("panssp.cov.txt")
+P_pheno <- merge(P_phenotype, P_covariate)
+setnames(P_pheno,
+        c("FID", "SampleID"),
+        c("FID", "IID"))
+P_y <- P_pheno[fam.order, on = c("FID", "IID")]
+# Calculate the null R2
+P_null.model <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSP_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_P~Age+", .) %>%
+    as.formula %>%
+    lm(., data = P_y) %>%
+    summary
+P_null.r2 <- P_null.model$r.squared
+
+#PANSS_N
+N_phenotype <- fread("PANSS_N.txt")
+N_covariate <- fread("panssn.cov.txt")
+N_pheno <- merge(N_phenotype, N_covariate)
+setnames(N_pheno,
+        c("FID", "SampleID"),
+        c("FID", "IID"))
+N_y <- N_pheno[fam.order, on = c("FID", "IID")]
+# Calculate the null R2
+N_null.model <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSN_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_N~Age+", .) %>%
+    as.formula %>%
+    lm(., data = N_y) %>%
+    summary
+N_null.r2 <- N_null.model$r.squared
+
+#PANSS_G
+G_phenotype <- fread("PANSS_G.txt")
+G_covariate <- fread("panssg.cov.txt")
+G_pheno <- merge(G_phenotype, G_covariate)
+setnames(G_pheno,
+        c("FID", "SampleID"),
+        c("FID", "IID"))
+G_y <- G_pheno[fam.order, on = c("FID", "IID")]
+# Calculate the null R2
+G_null.model <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSG_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_G~Age+", .) %>%
+    as.formula %>%
+    lm(., data = G_y) %>%
+    summary
+G_null.r2 <- G_null.model$r.squared
+
+#EPSAE
+# Read in the phenotype file 
+library(fmsb)
+# Read in the phenotype file 
+E_phenotype <- read.table("EPSAE.txt", header=T)
+# Read in the covariates
+E_covariate <- read.table("SAfrica.cov.txt", header=T)
+E_phenotype <- E_phenotype[c(-3,-10, -12, -25, -31, -33, -40, -41, -42, -43, -44, -45, -60, -61, -62, -71, -72, -76, -79, -84, -85, -86, -92, -93, -94),]
+# Now merge the files
+E_pheno <- merge(E_phenotype, E_covariate, by = c("FID", "SampleID"))
+
+# We can then calculate the null model (model without PRS) using logistic regression 
+# (as PANSS_T is quantitative)
+E_null.model <- glm(EPSAE~., data=E_pheno[,!colnames(E_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+E_null.r2 <- NagelkerkeR2(E_null.model)$R2
+E_prs.result <- NULL
+
+
+#Run AUTO MODEL
+# Get adjusted beta from the auto model (will take a while)
+multi_auto <- snp_ldpred2_auto(
+    corr,
+    df_beta,
+    h2_init = h2_est,
+    vec_p_init = seq_log(1e-4, 0.9, length.out = 30),
+    ncores = NCORES
+)
+
+#verify if chains converge
+library(ggplot2)
+auto <- multi_auto[[1]]
+plot_grid(
+	qplot(y = auto$path_p_est) + theme_bigstatsr() + geom_hline(yintercept = auto$p_est, col = "blue") + scale_y_log10() + labs(y="p"),
+	qplot(y = auto$path_h2_est) + theme_bigstatsr() + geom_hline(yintercept = auto$h2_est, col = "blue") + labs(y="h2"),
+	ncol = 1, align = "hv"
+)
+
+beta_auto <- sapply(multi_auto, function(auto)
+    auto$beta_est)
+
+#Obtain model PRS
+if(is.null(obj.bigSNP)){
+    obj.bigSNP <- snp_attach("SAfrica.QC.rds")
+}
+genotype <- obj.bigSNP$genotypes
+# calculate PRS for all samples
+ind.test <- 1:nrow(genotype)
+pred_auto <-
+    big_prodMat(genotype,
+                beta_auto,
+                ind.row = ind.test,
+                ind.col = info_snp$`_NUM_ID_`)
+# scale the PRS generated from AUTO
+pred_scaled <- apply(pred_auto, 2, sd)
+final_beta_auto <-
+    rowMeans(beta_auto[,
+                abs(pred_scaled -
+                    median(pred_scaled)) <
+                    3 * mad(pred_scaled)])
+pred_auto <-
+    big_prodVec(genotype,
+        final_beta_auto,
+        ind.row = ind.test,
+        ind.col = info_snp$`_NUM_ID_`)
+#Write PRS to file
+write(pred_auto, file = "ldpred2_PRS.txt", ncolumns = 1, sep = " ")
+
+#GET THE FINAL PERFORMANCE OF THE LDPRED2 AUTO MODEL for all ATR outcomes
+#PANSS_T
+reg.formula <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSST_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_T~PRS+Age+", .) %>%
+    as.formula
+reg.dat <- y
+reg.dat$PRS <- pred_auto
+auto.model <- lm(reg.formula, dat=reg.dat) %>%
+    summary
+(result <- data.table(
+    auto = auto.model$r.squared - null.r2,
+    null = null.r2
+))
+auto.model[["coefficients"]]
+auto.model[["r.squared"]]
+
+#PANSS_P
+P_reg.formula <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSP_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_P~PRS+Age+", .) %>%
+    as.formula
+P_reg.dat <- P_y
+P_reg.dat$PRS <- pred_auto
+P_auto.model <- lm(P_reg.formula, dat=P_reg.dat) %>%
+    summary
+(result <- data.table(
+    auto = P_auto.model$r.squared - P_null.r2,
+    null = P_null.r2
+))
+P_auto.model[["coefficients"]]
+P_auto.model[["r.squared"]]
+
+#PANSS_G
+G_reg.formula <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSG_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_G~PRS+Age+", .) %>%
+    as.formula
+G_reg.dat <- G_y
+G_reg.dat$PRS <- pred_auto
+G_auto.model <- lm(G_reg.formula, dat=G_reg.dat) %>%
+    summary
+(result <- data.table(
+    auto = G_auto.model$r.squared - G_null.r2,
+    null = G_null.r2
+))
+G_auto.model[["coefficients"]]
+G_auto.model[["r.squared"]]
+
+#PANSS_N
+N_reg.formula <- paste(c("Gender","Ethnic.group", "african_san", "african_non_san", "european", "south_asian", "east_asian", "PANSSN_baseline"), sep = "", collapse = "+") %>%
+    paste0("PANSS_N~PRS+Age+", .) %>%
+    as.formula
+N_reg.dat <- N_y
+N_reg.dat$PRS <- pred_auto
+N_auto.model <- lm(N_reg.formula, dat=N_reg.dat) %>%
+    summary
+(result <- data.table(
+    auto = N_auto.model$r.squared - N_null.r2,
+    null = N_null.r2
+))
+N_auto.model[["coefficients"]]
+N_auto.model[["r.squared"]]
+
+#EPSAE
+E_prs <- read_excel("LDpred2_prs.xlsx")
+E_prs$PRS <- as.numeric(E_prs$PRS)
+#merge PRS and pheno
+E_pheno.prs <- merge(E_pheno, E_prs[,c("FID","SampleID", "PRS")], by=c("FID", "SampleID"))
+# Now perform a logistic regression on EPSAE with PRS and the covariates
+E_model <- glm(EPSAE~., data=E_pheno.prs[,!colnames(E_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+E_model.r2 <- NagelkerkeR2(E_model)$R2
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+E_prs.r2 <- E_model.r2-E_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+E_prs.coef <- summary(E_model)$coeff["PRS",]
+E_prs.beta <- as.numeric(E_prs.coef[1])
+E_prs.se <- as.numeric(E_prs.coef[2])
+E_prs.p <- as.numeric(E_prs.coef[4])
+    # We can then store the results
+E_prs.result <- rbind(E_prs.result, data.frame(Null_R2=E_null.r2, Model_R2=E_model.r2, R2=E_prs.r2, P=E_prs.p, BETA=E_prs.beta,SE=E_prs.se))
+write.table(E_prs.result, file = "EPSAE_ldpred2.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+

@@ -1,0 +1,224 @@
+#Use different PRS to predict ATR classes
+#load needed libraries for multinomial logistic regression
+library(ggplot2)
+library(foreign)
+library(nnet)
+library(reshape2)
+library(readxl)
+library(DescTools)
+library(AICcmodavg)
+library(GGally)
+
+#read in excel document with PRSs, ATR classes and covariates
+PRSc <- read_excel("PRS_cov_clusters1.xlsx")
+
+#convert to correct class
+PRSc$kml3d_BIC_4 <- factor(PRSc$kml3d_BIC_4)
+PRSc$Gender <- factor(PRSc$Gender)
+PRSc$Ethnic.group <- factor(PRSc$Ethnic.group)
+PRSc$PRSice2_T <- as.numeric(PRSc$PRSice2_T)
+PRSc$PRSice2_E <- as.numeric(PRSc$PRSice2_E)
+PRSc$PRSice_P <- as.numeric(PRSc$PRSice_P)
+PRSc$PRSice_N <- as.numeric(PRSc$PRSice_N)
+PRSc$PRSice_G <- as.numeric(PRSc$PRSice_G)
+PRSc$LDpred2 <- as.numeric(PRSc$LDpred2)
+PRSc$lassosum_T <- as.numeric(PRSc$lassosum_T)
+PRSc$Lasso_P <- as.numeric(PRSc$Lasso_P)
+PRSc$Lasso_N <- as.numeric(PRSc$Lasso_N)
+PRSc$Lasso_G <- as.numeric(PRSc$Lasso_G)
+PRSc$Lasso_E <- as.numeric(PRSc$Lasso_E)
+PRSc$PRS_CS <- as.numeric(PRSc$PRS_CS)
+PRSc$PRS_CSx <- as.numeric(PRSc$PRS_CSx)
+PRSc$african_san <- as.numeric(PRSc$african_san)
+PRSc$african_non_san <- as.numeric(PRSc$african_non_san)
+PRSc$european <- as.numeric(PRSc$european)
+PRSc$south_asian <- as.numeric(PRSc$south_asian)
+PRSc$east_asian <- as.numeric(PRSc$east_asian)
+PRSc$CTQ_total_score <- as.numeric(PRSc$CTQ_total_score)
+PRSc$CTQ_EA <- as.numeric(PRSc$CTQ_EA)
+PRSc$CTQ_PA <- as.numeric(PRSc$CTQ_PA)
+PRSc$CTQ_SA <- as.numeric(PRSc$CTQ_SA)
+PRSc$CTQ_EN <- as.numeric(PRSc$CTQ_EN)
+PRSc$CTQ_PN <- as.numeric(PRSc$CTQ_PN)
+PRSc$PANSSP_baseline <- as.numeric(PRSc$PANSSP_baseline)
+PRSc$PANSSN_baseline <- as.numeric(PRSc$PANSSN_baseline)
+PRSc$PANSSG_baseline <- as.numeric(PRSc$PANSSG_baseline)
+PRSc$PANSST_baseline <- as.numeric(PRSc$PANSST_baseline)
+
+#define reference class
+PRSc$prog <- relevel(PRSc$kml3d_BIC_4, ref = "A")
+
+#FULL MODELS -PRS plus full covariate list (baseline, age, ethnicity etc)
+#prsiceT 
+prsice_T_full <- multinom(prog ~ scale(PRSice2_T) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + south_asian + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+prsice_T_full_summary <- summary(prsice_T_full)
+z_prsice_T_full <- summary(prsice_T_full)$coefficients/summary(prsice_T_full)$standard.errors
+p_prsice_T_full <- (1-pnorm(abs(z_prsice_T_full), 0, 1))*2
+
+#prsiceP 
+prsice_P_full <- multinom(prog ~ scale(PRSice_P) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, maxit = 200, MaxNWts = 1800) 
+prsice_P_summary_full <- summary(prsice_P_full)
+z_prsice_P_full <- summary(prsice_P_full)$coefficients/summary(prsice_P_full)$standard.errors
+p_prsice_P_full <- (1-pnorm(abs(z_prsice_P_full), 0, 1))*2
+
+#prsiceN 
+prsice_N_full <- multinom(prog ~ scale(PRSice_N) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+prsice_N_full_summary <- summary(prsice_N_full)
+z_prsice_N_full <- summary(prsice_N_full)$coefficients/summary(prsice_N_full)$standard.errors
+p_prsice_N_full <- (1-pnorm(abs(z_prsice_N_full), 0, 1))*2
+
+#prsiceG 
+prsice_G_full <- multinom(prog ~ scale(PRSice_G) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+prsice_G_full_summary <- summary(prsice_G_full)
+z_prsice_G_full <- summary(prsice_G_full)$coefficients/summary(prsice_G_full)$standard.errors
+p_prsice_G_full <- (1-pnorm(abs(z_prsice_G_full), 0, 1))*2
+
+#prsiceE 
+prsice_E_full <- multinom(prog ~ scale(PRSice2_E) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, maxit = 200, MaxNWts = 1800) 
+prsice_E_full_summary <- summary(prsice_E_full)
+z_prsice_E_full <- summary(prsice_E_full)$coefficients/summary(prsice_E_full)$standard.errors
+p_prsice_E_full <- (1-pnorm(abs(z_prsice_E_full), 0, 1))*2
+
+
+#Lasso_T
+lasso_T_full <- multinom(prog ~ scale(lassosum_T) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+lasso_T_full_summary <- summary(lasso_T_full)
+z_lasso_T_full <- summary(lasso_T_full)$coefficients/summary(lasso_T_full)$standard.errors
+p_lasso_T_full <- (1-pnorm(abs(z_lasso_T_full), 0, 1))*2
+
+#Lasso_P
+lasso_P_full <- multinom(prog ~ scale(Lasso_P) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+lasso_P_full_summary <- summary(lasso_P_full)
+z_lasso_P_full <- summary(lasso_P_full)$coefficients/summary(lasso_P_full)$standard.errors
+p_lasso_P_full <- (1-pnorm(abs(z_lasso_P_full), 0, 1))*2
+
+#Lasso_N
+lasso_N_full <- multinom(prog ~ scale(Lasso_N) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+lasso_N_full_summary <- summary(lasso_N_full)
+z_lasso_N_full <- summary(lasso_N_full)$coefficients/summary(lasso_N_full)$standard.errors
+p_lasso_N_full <- (1-pnorm(abs(z_lasso_N_full), 0, 1))*2
+
+#Lasso_G
+lasso_G_full <- multinom(prog ~ scale(Lasso_G) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+lasso_G_full_summary <- summary(lasso_G_full)
+z_lasso_G_full <- summary(lasso_G_full)$coefficients/summary(lasso_G_full)$standard.errors
+p_lasso_G_full <- (1-pnorm(abs(z_lasso_G_full), 0, 1))*2
+
+#Lasso_E
+lasso_E_full <- multinom(prog ~ scale(Lasso_E) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+lasso_E_full_summary <- summary(lasso_E_full)
+z_lasso_E_full <- summary(lasso_E_full)$coefficients/summary(lasso_E_full)$standard.errors
+p_lasso_E_full <- (1-pnorm(abs(z_lasso_E_full), 0, 1))*2
+
+
+#ldpred2
+ldpred_full <- multinom(prog ~ scale(LDpred2) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, maxit = 200, MaxNWts = 1800) 
+ldpred_summary_full <- summary(ldpred_full)
+z_ldpred_full <- summary(ldpred_full)$coefficients/summary(ldpred_full)$standard.errors
+p_ldpred_full <- (1-pnorm(abs(z_ldpred_full), 0, 1))*2
+
+#PRS-CS
+prscs_full <- multinom(prog ~ scale(PRS_CS) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+prscs_summary_full <- summary(prscs_full)
+z_prscs_full <- summary(prscs_full)$coefficients/summary(prscs_full)$standard.errors
+p_prscs_full <- (1-pnorm(abs(z_prscs_full), 0, 1))*2
+
+#PRS-CSx
+prscsx_full <- multinom(prog ~ scale(PRS_CSx) + scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+prscsx_summary_full <- summary(prscsx_full)
+z_prscsx_full <- summary(prscsx_full)$coefficients/summary(prscsx_full)$standard.errors
+p_prscsx_full <- (1-pnorm(abs(z_prscsx_full), 0, 1))*2
+
+
+#without PRS
+noprs_full <- multinom(prog ~ scale(Age) + Gender + Ethnic.group + scale(african_san) + scale(african_non_san) + scale(european) + scale(south_asian) + scale(east_asian), data = PRSc, MaxNWts = 1800) 
+noprs_summary_full <- summary(noprs_full)
+z_noprs_full <- summary(noprs_full)$coefficients/summary(noprs_full)$standard.errors
+p_noprs_full <- (1-pnorm(abs(z_noprs_full), 0, 1))*2
+
+#PRS ON OWN 
+#just prsiceT
+prsice_T <- multinom(prog ~ scale(PRSice2_T), data = PRSc, maxit = 600, MaxNWts = 1800) 
+prsice_T_summary <- summary(prsice_T)
+z_prsice_T <- summary(prsice_T)$coefficients/summary(prsice_T)$standard.errors
+p_prsice_T <- (1-pnorm(abs(z_prsice_T), 0, 1))*2
+
+#just prsiceP
+prsice_P <- multinom(prog ~ scale(PRSice_P), data = PRSc, maxit = 600, MaxNWts = 1800) 
+prsice_P_summary <- summary(prsice_P)
+z_prsice_P <- summary(prsice_P)$coefficients/summary(prsice_P)$standard.errors
+p_prsice_P <- (1-pnorm(abs(z_prsice_P), 0, 1))*2
+
+#just prsiceN
+prsice_N <- multinom(prog ~ scale(PRSice_N), data = PRSc, maxit = 200, MaxNWts = 1800) 
+prsice_N_summary <- summary(prsice_N)
+z_prsice_N <- summary(prsice_N)$coefficients/summary(prsice_N)$standard.errors
+p_prsice_N <- (1-pnorm(abs(z_prsice_N), 0, 1))*2
+
+#just prsiceG
+prsice_G <- multinom(prog ~ scale(PRSice_G), data = PRSc, maxit = 200, MaxNWts = 1800) 
+prsice_G_summary <- summary(prsice_G)
+z_prsice_G <- summary(prsice_G)$coefficients/summary(prsice_G)$standard.errors
+p_prsice_G <- (1-pnorm(abs(z_prsice_G), 0, 1))*2
+
+#just prsiceE
+prsice_E <- multinom(prog ~ scale(PRSice2_E), data = PRSc, maxit = 600, MaxNWts = 1800) 
+prsice_E_summary <- summary(prsice_E)
+z_prsice_E <- summary(prsice_E)$coefficients/summary(prsice_E)$standard.errors
+p_prsice_E <- (1-pnorm(abs(z_prsice_E), 0, 1))*2
+
+#just lassosum_T
+lasso_T <- multinom(prog ~ scale(lassosum_T), data = PRSc, maxit = 600, MaxNWts = 1800) 
+lasso_T_summary <- summary(lasso_T)
+z_lasso_T <- summary(lasso_T)$coefficients/summary(lasso_T)$standard.errors
+p_lasso_T <- (1-pnorm(abs(z_lasso_T), 0, 1))*2
+
+#just lassosum_P
+lasso_P <- multinom(prog ~ scale(Lasso_P), data = PRSc, maxit = 600, MaxNWts = 1800) 
+lasso_P_summary <- summary(lasso_P)
+z_lasso_P <- summary(lasso_P)$coefficients/summary(lasso_P)$standard.errors
+p_lasso_P <- (1-pnorm(abs(z_lasso_P), 0, 1))*2
+
+#just lassosum_N
+lasso_N <- multinom(prog ~ scale(Lasso_N), data = PRSc, maxit = 600, MaxNWts = 1800) 
+lasso_N_summary <- summary(lasso_N)
+z_lasso_N <- summary(lasso_N)$coefficients/summary(lasso_N)$standard.errors
+p_lasso_N <- (1-pnorm(abs(z_lasso_N), 0, 1))*2
+
+#just lassosum_G
+lasso_G <- multinom(prog ~ scale(Lasso_G), data = PRSc, maxit = 600, MaxNWts = 1800) 
+lasso_G_summary <- summary(lasso_G)
+z_lasso_G <- summary(lasso_G)$coefficients/summary(lasso_G)$standard.errors
+p_lasso_G <- (1-pnorm(abs(z_lasso_G), 0, 1))*2
+
+#just lassosum_E
+lasso_E <- multinom(prog ~ scale(Lasso_E), data = PRSc, maxit = 600, MaxNWts = 1800) 
+lasso_E_summary <- summary(lasso_E)
+z_lasso_E <- summary(lasso_E)$coefficients/summary(lasso_E)$standard.errors
+p_lasso_E <- (1-pnorm(abs(z_lasso_E), 0, 1))*2
+
+#ldpred2
+ldpred <- multinom(prog ~ scale(LDpred2), data = PRSc, maxit = 600, MaxNWts = 1800) 
+ldpred_summary <- summary(ldpred)
+z_ldpred <- summary(ldpred)$coefficients/summary(ldpred)$standard.errors
+p_ldpred <- (1-pnorm(abs(z_ldpred), 0, 1))*2
+
+
+#PRS-CS
+prscs <- multinom(prog ~ scale(PRS_CS), data = PRSc, maxit = 600, MaxNWts = 1800) 
+prscs_summary <- summary(prscs)
+z_prscs <- summary(prscs)$coefficients/summary(prscs)$standard.errors
+p_prscs <- (1-pnorm(abs(z_prscs), 0, 1))*2
+
+#PRS-CSx
+prscsx <- multinom(prog ~ scale(PRS_CSx), data = PRSc, maxit = 600, MaxNWts = 1800) 
+prscsx_summary <- summary(prscsx)
+z_prscsx <- summary(prscsx)$coefficients/summary(prscsx)$standard.errors
+p_prscsx <- (1-pnorm(abs(z_prscsx), 0, 1))*2
+
+#AICc
+models <- list(noprs_full, prsice_T_full, prsice_P_full, prsice_N_full, prsice_G_full, prsice_E_full, lasso_T_full, lasso_P_full, lasso_N_full, lasso_G_full, lasso_E_full, ldpred_full, prscs_full, prscsx_full, prsice_T, prsice_P, prsice_N, prsice_G, prsice_E, lasso_T, lasso_P, lasso_N, lasso_G, lasso_E, ldpred, prscs, prscsx)
+model.names <- c('noprs_full','prsice_T_full', 'prsice_P_full', 'prsice_N_full', 'prsice_G_full', 'prsice_E_full', 'lasso_T_full', 'lasso_P_full', 'lasso_N_full', 'lasso_G_full', 'lasso_E_full', 'ldpred_full', 'prscs_full', 'prscsx_full','prsice_T', 'prsice_P', 'prsice_N', 'prsice_G', 'prsice_E', 'lasso_T', 'lasso_P', 'lasso_N', 'lasso_G', 'lasso_E,', 'ldpred', 'prscs', 'prscsx')
+prs_models_aicc <- aictab(cand.set = models, modnames = model.names)
+write.table(prs_models_aicc, file = "prs_models_scaled_aicc.txt", row.names = T, col.names = F, sep = " ", quote = FALSE)
+

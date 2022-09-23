@@ -1,0 +1,250 @@
+#PRS-CSx method for PRS calculation for ATR outcomes
+#code from: https://github.com/getian107/PRScsx
+#In command prompt:
+cd ..
+cd ..
+cd Users/20742959/Desktop/PRS_CSx
+
+#to install 'scipy' python package
+pip install scipy
+#to install 'h5py' python package
+pip install h5py
+
+#download and extract LD reference panels
+#must be 'run by administrator'
+tar -xvzf ldblk_1kg_eur.tar.gz 
+
+#sumstats must have "SNP  A1   A2   BETA  P" format or "SNP  A1   A2   OR  P"
+#In RStudio
+#remove unnecessary columns
+setwd("C:/Users/20742959/Desktop/PRS_CSx")
+library(bigsnpr)
+sumstats <- bigreadr::fread2("SCZ3.AA.QC.gz")
+sumstats[c("CHR", "POS", "FFCAS", "FCON", "IMPINFO", "SE")] <- NULL
+sumstats[c("CHROM", "FCAS")] <- NULL
+colnames(sumstats)[1] <- "SNP"
+colnames(sumstats)[5] <- "P"
+#write to .txt
+write.table(sumstats, file = "AAsumstats.txt", quote = FALSE, sep = " ", row.names = FALSE)
+
+#remove unnecessary columns
+sumstats1 <- bigreadr::fread2("SCZ3.core.QC.gz")
+sumstats1[c("CHROM", "POS", "FCAS", "FCON", "IMPINFO", "SE", "NGT", "DIRE", "NCAS", "NCON", "NEFF")] <- NULL
+colnames(sumstats1)[1] <- "SNP"
+colnames(sumstats1)[5] <- "P"
+#write to .txt
+write.table(sumstats1, file = "CORE.sumstats.txt", quote = FALSE, sep = " ", row.names = FALSE)
+
+
+#need to have python in directory and PRScsx.py
+python PRScsx.py --ref_dir=ref --bim_prefix=SAfrica.QC --sst_file=CORE.sumstats.txt, AAsumstats.txt --n_gwas=161405,9822 --pop=EUR, AFR --out_dir=pos_effect/prscsx --out_name=joint --meta=TRUE --seed=25
+
+#In RStudio
+#concantenate output files
+listfiles <- list.files("./pos_effect/prscsx")
+
+# Read the files in, assuming tab separator, this needs to be done in the directory with the output files (./pos_effect/prscx)
+txt_files_df <- lapply(listfiles, function(x) {read.table(file = x, header = F, sep ="\t")})
+#combine them
+combined_df <- do.call("rbind", lapply(txt_files_df, as.data.frame))
+write.table(combined_df, file = "prs_csx_meta_snps.txt", quote = FALSE, sep = "\t", row.names = FALSE)
+
+#In Commandline
+#PLINK
+plink.exe --bfile SAfrica.QC --score prs_csx_meta_snps.txt 2 4 6 --out PRS_CSx
+
+#results:
+#C:\Users\20742959\Desktop\PRS_CSx>plink.exe --bfile SAfrica.QC --score prs_csx_meta_snps.txt 2 4 6 --out PRS_CSx
+#PLINK v1.90b6.26 64-bit (2 Apr 2022)           www.cog-genomics.org/plink/1.9/
+#(C) 2005-2022 Shaun Purcell, Christopher Chang   GNU General Public License v3
+#Logging to PRS_CSx.log.
+#Options in effect:
+#  --bfile SAfrica.QC
+#  --out PRS_CSx
+#  --score prs_csx_meta_snps.txt 2 4 6
+
+#8052 MB RAM detected; reserving 4026 MB for main workspace.
+#203522 variants loaded from .bim file.
+#76 people (0 males, 0 females, 76 ambiguous) loaded from .fam.
+#Ambiguous sex IDs written to PRS_CSx.nosex .
+#Using 1 thread (no multithreaded calculations invoked).
+#Before main variant filters, 76 founders and 0 nonfounders present.
+#Calculating allele frequencies... done.
+#Total genotyping rate is exactly 1.
+#203522 variants and 76 people pass filters and QC.
+#Note: No phenotypes present.
+#Warning: 1 line skipped in --score file (1 due to variant ID mismatch, 0 due to
+#allele code mismatch); see PRS_CSx.nopred for details.
+#--score: 151045 valid predictors loaded.
+#--score: Results written to PRS_CSx.profile .
+
+#In RStudio
+#read in PRS-CSx PRS
+prs <- fread("PRS_CSx.profile")
+prs$PHENO <- NULL
+prs$CNT <- NULL
+prs$CNT2 <- NULL
+colnames(prs)[2] <- "SampleID"
+#evaluating PRS against change in PANSS_T
+# Read in the phenotype file 
+phenotype <- read.table("PANSS_T.txt", header=T)
+# Read in the covariates
+covariate <- read.table("pansst.cov.txt", header=T)
+# Now merge the files
+pheno <- merge(phenotype, covariate, by = c("FID", "SampleID"))
+pheno <- pheno[c(-14, -28),]
+# We can then calculate the null model (model with PRS) using a linear regression 
+# (as PANSS_T is quantitative)
+null.model <- lm(PANSS_T~., data=pheno[,!colnames(pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+null.r2 <- summary(null.model)$r.squared
+prs.result <- NULL
+
+#merge prs and pheno files    
+pheno.prs <- merge(pheno, prs[,c("FID","SampleID", "SCORE")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_T with PRS and the covariates
+model <- lm(PANSS_T~., data=pheno.prs[,!colnames(pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+model.r2 <- summary(model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+prs.r2 <- model.r2-null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+prs.coef <- summary(model)$coeff["SCORE",]
+prs.beta <- as.numeric(prs.coef[1])
+prs.se <- as.numeric(prs.coef[2])
+prs.p <- as.numeric(prs.coef[4])
+# We can then store the results
+prs.result <- rbind(prs.result, data.frame(Null_R2=null.r2, Model_R2=model.r2, R2=prs.r2, P=prs.p, BETA=prs.beta,SE=prs.se))
+
+#evaluating PRS against change in PANSS_P
+# Read in the phenotype file 
+P_phenotype <- read.table("PANSS_P.txt", header=T)
+# Read in the covariates (here, it is sex)
+P_covariate <- read.table("panssp.cov.txt", header=T)
+# Now merge the files
+P_pheno <- merge(P_phenotype, P_covariate, by = c("FID", "SampleID"))
+#pheno <- pheno[c(-14, -28),]
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_T is quantitative)
+P_null.model <- lm(PANSS_P~., data=P_pheno[,!colnames(P_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+P_null.r2 <- summary(P_null.model)$r.squared
+P_prs.result <- NULL
+
+#merge prs and pheno files
+P_pheno.prs <- merge(P_pheno, prs[,c("FID","SampleID", "SCORE")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_P with PRS and the covariates
+P_model <- lm(PANSS_P~., data=P_pheno.prs[,!colnames(P_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+P_model.r2 <- summary(P_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+P_prs.r2 <- P_model.r2-P_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+P_prs.coef <- summary(P_model)$coeff["SCORE",]
+P_prs.beta <- as.numeric(P_prs.coef[1])
+P_prs.se <- as.numeric(P_prs.coef[2])
+P_prs.p <- as.numeric(P_prs.coef[4])
+# We can then store the results
+P_prs.result <- rbind(P_prs.result, data.frame(Null_R2=P_null.r2, Model_R2=P_model.r2, R2=P_prs.r2, P=P_prs.p, BETA=P_prs.beta,SE=P_prs.se))
+
+#evaluating PRS against change in PANSS_N
+# Read in the phenotype file 
+N_phenotype <- read.table("PANSS_N.txt", header=T)
+# Read in the covariates (here, it is sex)
+N_covariate <- read.table("panssn.cov.txt", header=T)
+# Now merge the files
+N_pheno <- merge(N_phenotype, N_covariate, by = c("FID", "SampleID"))
+#pheno <- pheno[c(-14, -28),]
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_T is quantitative)
+N_null.model <- lm(PANSS_N~., data=N_pheno[,!colnames(N_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+N_null.r2 <- summary(N_null.model)$r.squared
+N_prs.result <- NULL
+
+#merge prs and pheno
+N_pheno.prs <- merge(N_pheno, prs[,c("FID","SampleID", "SCORE")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_N with PRS and the covariates
+N_model <- lm(PANSS_N~., data=N_pheno.prs[,!colnames(N_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+N_model.r2 <- summary(N_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+N_prs.r2 <- N_model.r2-N_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+N_prs.coef <- summary(N_model)$coeff["SCORE",]
+N_prs.beta <- as.numeric(N_prs.coef[1])
+N_prs.se <- as.numeric(N_prs.coef[2])
+N_prs.p <- as.numeric(N_prs.coef[4])
+# We can then store the results
+N_prs.result <- rbind(N_prs.result, data.frame(Null_R2=N_null.r2, Model_R2=N_model.r2, R2=N_prs.r2, P=N_prs.p, BETA=N_prs.beta,SE=N_prs.se))
+
+#evaluating PRS against change in PANSS_G
+# Read in the phenotype file 
+G_phenotype <- read.table("PANSS_G.txt", header=T)
+# Read in the covariates (here, it is sex)
+G_covariate <- read.table("panssg.cov.txt", header=T)
+# Now merge the files
+G_pheno <- merge(G_phenotype, G_covariate, by = c("FID", "SampleID"))
+#pheno <- pheno[c(-14, -28),]
+# We can then calculate the null model (model without PRS) using a linear regression 
+# (as PANSS_T is quantitative)
+G_null.model <- lm(PANSS_G~., data=G_pheno[,!colnames(G_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+G_null.r2 <- summary(G_null.model)$r.squared
+G_prs.result <- NULL
+
+#merge prs and pheno files
+G_pheno.prs <- merge(G_pheno, prs[,c("FID","SampleID", "SCORE")], by=c("FID", "SampleID"))
+# Now perform a linear regression on PANSS_P with PRS and the covariates
+G_model <- lm(PANSS_G~., data=G_pheno.prs[,!colnames(G_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+G_model.r2 <- summary(G_model)$r.squared
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+G_prs.r2 <- G_model.r2-G_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+G_prs.coef <- summary(G_model)$coeff["SCORE",]
+G_prs.beta <- as.numeric(G_prs.coef[1])
+G_prs.se <- as.numeric(G_prs.coef[2])
+G_prs.p <- as.numeric(G_prs.coef[4])
+# We can then store the results
+G_prs.result <- rbind(G_prs.result, data.frame(Null_R2=G_null.r2, Model_R2=G_model.r2, R2=G_prs.r2, P=G_prs.p, BETA=G_prs.beta,SE=G_prs.se))
+
+#evaluating PRS against change in EPSAE
+library(fmsb)
+# Read in the phenotype file 
+E_phenotype <- read.table("EPSAE.txt", header=T)
+# Read in the covariates (here, it is sex)
+E_covariate <- read.table("SAfrica.cov.txt", header=T)
+# Now merge the files
+E_pheno <- merge(E_phenotype, E_covariate, by = c("FID", "SampleID"))
+#pheno <- pheno[c(-14, -28),]
+# We can then calculate the null model (model without PRS) using logistic regression 
+# (as PANSS_T is quantitative)
+E_null.model <- glm(EPSAE~., data=E_pheno[,!colnames(E_pheno)%in%c("FID","SampleID")])
+# And the R2 of the null model is 
+E_null.r2 <- NagelkerkeR2(E_null.model)$R2
+E_prs.result <- NULL
+
+#merge prs and pheno
+E_pheno.prs <- merge(E_pheno, prs[,c("FID","SampleID", "SCORE")], by=c("FID", "SampleID"))
+# Now perform a logistic regression on EPSAE with PRS and the covariates
+E_model <- glm(EPSAE~., data=E_pheno.prs[,!colnames(E_pheno.prs)%in%c("FID","SampleID")])
+# model R2 is obtained as 
+E_model.r2 <- NagelkerkeR2(E_model)$R2
+# R2 of PRS is simply calculated as the model R2 minus the null R2
+E_prs.r2 <- E_model.r2-E_null.r2
+# We can also obtain the coeffcient and p-value of association of PRS as follow
+E_prs.coef <- summary(E_model)$coeff["SCORE",]
+E_prs.beta <- as.numeric(E_prs.coef[1])
+E_prs.se <- as.numeric(E_prs.coef[2])
+E_prs.p <- as.numeric(E_prs.coef[4])
+# We can then store the results
+E_prs.result <- rbind(E_prs.result, data.frame(Null_R2=E_null.r2, Model_R2=E_model.r2, R2=E_prs.r2, P=E_prs.p, BETA=E_prs.beta,SE=E_prs.se))
+
+#write summary tables to txt files
+write.table(E_prs.result, file = "EPSAE_prscsx.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(P_prs.result, file = "PANSSP_prscsx.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(N_prs.result, file = "PANSSN_prscsx.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+write.table(G_prs.result, file = "PANSSG_prscsx.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+#write.table(prs.result, file = "PANSST_prscsx.result.txt", row.names = T, col.names = T, sep = " ", quote = FALSE)
+

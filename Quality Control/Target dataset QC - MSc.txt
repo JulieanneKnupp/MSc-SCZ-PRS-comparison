@@ -1,0 +1,67 @@
+#QC for target dataset for PRS
+#code from: https://choishingwan.github.io/PRS-Tutorial/target/
+
+#navigate to working directory
+cd /mnt/c/Users/Julieanne/Desktop/plinktest/'scz prs'/PRS
+cd /mnt/c/Users/20742959/Desktop/'PRS QC'
+
+#target data QC
+#1. QWAS QC - PLINK
+#filter MAF 0.05
+#filter HWE 1e-6
+#filter genotype missingness 0.01
+#filter missing sample rate 0.01
+./plink --bfile SAfrica --maf 0.05 --hwe 1e-6 --geno 0.01 --mind 0.01 --write-snplist --make-just-fam --out SAfrica.QC
+
+#2. Remove Extreme heterozygosities
+#i) LD pruning 
+#window size of 200kb, slide of a 50bp step size and a LD r2 limit of 0.25
+./plink \
+    --bfile SAfrica \
+    --keep SAfrica.QC.fam \
+    --extract SAfrica.QC.snplist \
+    --indep-pairwise 200 50 0.25 \
+    --out SAfrica.QC
+
+#ii) compute heterozygosity rates
+./plink \
+    --bfile SAfrica \
+    --extract SAfrica.QC.prune.in \
+    --keep SAfrica.QC.fam \
+    --het \
+    --out SAfrica.QC
+
+# iii) reomove individuals with F coefficients more than 3 SD units from mean - R in RStudio 
+setwd("C:/Users/20742959/Desktop/PRS QC")
+dat <- read.table("SAfrica.QC.het", header=T) # Read in the SAfrica.het file, specify it has header
+m <- mean(dat$F) # Calculate the mean  
+s <- sd(dat$F) # Calculate the SD
+valid <- subset(dat, F <= m+3*s & F >= m-3*s) # Get any samples with F coefficient within 3 SD of the population mean
+write.table(valid[,c(1,2)], "SAfrica.valid.sample", quote=F, row.names=F) # print FID and IID for valid samples
+
+#results:
+#output = SAfrica.valid.sample - which has 81 inidviduals (therefore 1 removed, same format as SAfrica.QC.het)
+#m (populaiton mean) = 0.007960316
+#s (standard deviation) = 0.03254582
+
+##4. Remove duplicated snps in target data
+#i) create list of duplicated snps
+sort SAfrica.QC.snplist | uniq -d > duplicated.target.snp
+#remove duplicated snps from snplist
+grep SAfrica.QC.snplist -vf duplicated.target.snp > SAfrica.QC.nodup.snplist
+
+#results:
+#no duplicated snps in snplist. 
+#SAfrica.QC.snplist has 596762 snps in it and none removed. 
+#Therefore can use SAfrica.QC.snplist and SAfrica.QC.nodup.snplist interchangably
+
+#5 relatedness check - PLINK
+#relatedness cut-off value of 0.125 (first or second degree relatives) 
+./plink --bfile SAfrica --extract SAfrica.QC.prune.in --keep SAfrica.valid.sample --rel-cutoff 0.125 --out SAfrica.QC
+
+#results:
+#3 people excluded by --rel-cutoff.
+
+#6 Generate final QCed target data
+./plink --bfile SAfrica --make-bed --keep SAfrica.QC.rel.id --out SAfrica.QC --extract SAfrica.QC.prune.in
+
